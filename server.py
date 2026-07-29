@@ -41,7 +41,7 @@ def get_claude_response(user_text):
     """Отримання фінансової відповіді від Claude"""
     try:
         message = client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-5",
             max_tokens=1200,
             system=SYSTEM_PROMPT,
             messages=[
