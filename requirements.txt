@@ -1,9 +1,16 @@
+# CPU-версія torch — набагато легша за стандартну (без CUDA), критично для Railway.
+# Має бути ПЕРЕД ultralytics, щоб він не притягнув важку CUDA-збірку.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch
+torchvision
+
 flask
 flask-cors
 anthropic
 python-dotenv
 gunicorn
 ultralytics
-pytesseract
+opencv-python-headless
 pillow
 pillow-heif
+numpy
