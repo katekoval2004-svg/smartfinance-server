@@ -91,10 +91,10 @@ def build_content(img, scal, items, right):
     """Список кропів (полів і товарів) для Claude. ПОВНЕ фото не додаємо."""
     W, H = img.size
     content = []
-    def add_crop(box, label, to_right=False, pad=6):
+    def add_crop(box, label, to_right=False, pad=6, extra_down=0):
         x1, y1, x2, y2 = box
         x1 = max(0, x1-pad); y1 = max(0, y1-pad)
-        x2 = min(W, (right+pad) if to_right else x2+pad); y2 = min(H, y2+pad)
+        x2 = min(W, (right+pad) if to_right else x2+pad); y2 = min(H, y2+pad+extra_down)
         crop = img.crop((x1, y1, x2, y2))
         if crop.width < 300:
             s = 300/crop.width; crop = crop.resize((int(crop.width*s), int(crop.height*s)), Image.LANCZOS)
@@ -103,7 +103,11 @@ def build_content(img, scal, items, right):
     for cls, d in scal.items():
         add_crop(d["box"], f"^ поле: {SCALAR[cls]}")
     for i, d in enumerate(items):
-        add_crop(d["box"], f"^ товар {i+1} (рядок: назва зліва, ціна справа)", to_right=True)
+        # розширюємо кроп вниз ~на висоту рядка — щоб зловити ціну, якщо назва
+        # товару перенеслась на другий рядок (напр. "...Dream Vio / let 59.90")
+        h = d["box"][3] - d["box"][1]
+        add_crop(d["box"], f"^ товар {i+1} (назва зліва, ціна справа; може бути 2 рядки)",
+                 to_right=True, extra_down=int(h * 0.9))
     content.append({"type": "text", "text": f"""Вище — вирізки з чека, кожна підписана (поле або товар).
 Прочитай текст кожної й поверни ЛИШЕ JSON:
 {{
