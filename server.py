@@ -7,6 +7,12 @@ from datetime import datetime
 
 load_dotenv('ai.env')
 
+# ── шляхи до моделей (файли лежать поряд із цим server.py) ──
+_HERE = os.path.dirname(os.path.abspath(__file__))
+os.environ.setdefault("CARD_DET_WEIGHTS", os.path.join(_HERE, "card_detector.pt"))
+os.environ.setdefault("CARD_OCR_WEIGHTS", os.path.join(_HERE, "card_ocr_crnn.pt"))
+os.environ.setdefault("RECEIPT_DET_WEIGHTS", os.path.join(_HERE, "best.pt"))  # YOLO чека
+
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
 app = Flask(__name__)
@@ -33,7 +39,7 @@ SYSTEM_PROMPT = """
 - Завжди задавай уточнюючі питання, якщо бракує даних для якісної відповіді.
 
 Відповідай українською мовою. Будь конкретним і практичним, уникай загальних фраз. Не використовуй жирний шрифт в жодному разі!!!
-Якщо питання не стосується фінансів — ввічливо поверни розмову до фінансових тем.89
+Якщо питання не стосується фінансів — ввічливо поверни розмову до фінансових тем.
 """
 
 
@@ -75,7 +81,7 @@ def chat():
                 "request_timestamp": request_timestamp
             }), 400
 
-        print(f"🤖 Відправляємо запит до Claude...")
+        print("🤖 Відправляємо запит до Claude...")
         ai_response = get_claude_response(user_text)
 
         response_timestamp = datetime.now().strftime("%H:%M:%S")
@@ -97,6 +103,42 @@ def chat():
             "request_timestamp": request_timestamp,
             "error_timestamp": error_timestamp
         }), 500
+
+
+# ==================== СКАНУВАННЯ КАРТКИ (локально, без Claude) ====================
+@app.route('/scan-card', methods=['POST'])
+def scan_card_route():
+    ts = datetime.now().strftime("%H:%M:%S")
+    print(f"\n💳 [{ts}] Запит на /scan-card")
+    f = request.files.get('image')
+    if f is None:
+        return jsonify({"status": "error", "error": "Немає файлу 'image'"}), 400
+    try:
+        from card_ocr import scan_card   # ліниво: моделі вантажаться при першому виклику
+        result = scan_card(f.read())
+        print(f"   -> {result}")
+        return jsonify({"status": "success", **result})
+    except Exception as e:
+        print(f"❌ scan-card помилка: {e}")
+        return jsonify({"status": "error", "error": f"Помилка сервера: {str(e)}"}), 500
+
+
+# ==================== СКАНУВАННЯ ЧЕКА (локально, Tesseract, без Claude) ==========
+@app.route('/scan-receipt', methods=['POST'])
+def scan_receipt_route():
+    ts = datetime.now().strftime("%H:%M:%S")
+    print(f"\n🧾 [{ts}] Запит на /scan-receipt")
+    f = request.files.get('image')
+    if f is None:
+        return jsonify({"status": "error", "error": "Немає файлу 'image'"}), 400
+    try:
+        from infer import scan_receipt   # твоя YOLO (infer.py) + Claude по кропах
+        result = scan_receipt(f.read())
+        print(f"   -> merchant={result.get('merchant')} items={len(result.get('items', []))}")
+        return jsonify({"status": "success", **result})
+    except Exception as e:
+        print(f"❌ scan-receipt помилка: {e}")
+        return jsonify({"status": "error", "error": f"Помилка сервера: {str(e)}"}), 500
 
 
 @app.route('/health', methods=['GET'])
