@@ -3,7 +3,7 @@
 """Детектор-first: YOLO обводить поля/товари -> читаємо кожен бокс -> збираємо JSON.
 CLI зберігає фото з боксами; функція scan_receipt() використовується сервером."""
 import os, io, sys, json, glob, base64, argparse
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 try:
     import pillow_heif; pillow_heif.register_heif_opener()
 except Exception:
@@ -107,7 +107,7 @@ def build_content(img, scal, items, right):
         # товару перенеслась на другий рядок (напр. "...Dream Vio / let 59.90")
         h = d["box"][3] - d["box"][1]
         add_crop(d["box"], f"^ товар {i+1} (назва зліва, ціна справа; може бути 2 рядки)",
-                 to_right=True, extra_down=int(h * 0.9))
+                 to_right=True, extra_down=int(h * 1.3))
     content.append({"type": "text", "text": f"""Вище — вирізки з чека, кожна підписана (поле або товар).
 Прочитай текст кожної й поверни ЛИШЕ JSON:
 {{
@@ -138,7 +138,8 @@ def read_with_claude(content, model_name=DEFAULT_MODEL):
 # ---- ФУНКЦІЯ ДЛЯ СЕРВЕРА ----
 def scan_receipt(image_bytes, conf=DEFAULT_CONF, claude_model=DEFAULT_MODEL):
     """Байти зображення -> JSON чека (детекція YOLO + читання кропів Claude)."""
-    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    img = Image.open(io.BytesIO(image_bytes))
+    img = ImageOps.exif_transpose(img).convert("RGB")  # застосувати орієнтацію з телефона
     dets = detect(img, conf=conf)
     empty = {"merchant": None, "location": None, "date": None, "total": None,
              "vat": None, "order_number": None, "items": []}
@@ -169,7 +170,7 @@ def main():
     if not os.environ.get("ANTHROPIC_API_KEY"):
         sys.exit("Немає ключа: перевір ai.env поряд з infer.py")
 
-    img = Image.open(a.image).convert("RGB"); W, H = img.size
+    img = Image.open(a.image); img = ImageOps.exif_transpose(img).convert("RGB"); W, H = img.size
     dets = detect(img, conf=a.conf, weights=a.weights)
     if not dets:
         sys.exit("Модель не знайшла жодного боксу.")
@@ -183,7 +184,10 @@ def main():
         dr.rectangle(box, outline=color, width=3)
         dr.text((box[0]+2, max(0, box[1]-16)), label, fill=color, font=fnt)
     for cls, d in scal.items(): draw(d["box"], cls, COLORS.get(cls, "#f00"))
-    for i, d in enumerate(items): draw(d["box"], f"Item{i+1}", COLORS["Item"])
+    # малюємо РЕАЛЬНУ вирізку товару (до правого краю + вниз) — саме її бачить Claude
+    for i, d in enumerate(items):
+        x1, y1, x2, y2 = d["box"]; h = y2 - y1
+        draw([x1, y1, min(W, right + 6), min(H, int(y2 + h * 1.3))], f"Item{i+1}", COLORS["Item"])
     os.makedirs(os.path.dirname(a.annotated) or ".", exist_ok=True); vis.save(a.annotated)
 
     api_key = os.getenv("ANTHROPIC_API_KEY")
