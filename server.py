@@ -44,20 +44,23 @@ SYSTEM_PROMPT = """
 
 
 def get_claude_response(user_text):
-    """Отримання фінансової відповіді від Claude"""
+    """Отримання фінансової відповіді від Claude. Помилки пробрасуються — /chat поверне 500."""
     try:
         message = client.messages.create(
             model="claude-sonnet-5",
-            max_tokens=1200,
+            max_tokens=7000,
             system=SYSTEM_PROMPT,
             messages=[
                 {"role": "user", "content": user_text}
             ]
         )
-        return message.content[0].text
     except Exception as e:
         print(f"Помилка запиту до Claude: {e}")
-        return f"На жаль, сталася помилка при обробці запиту: {str(e)}"
+        raise
+    text = "".join(block.text for block in message.content if block.type == "text").strip()
+    if not text:
+        raise RuntimeError(f"Claude повернув порожню відповідь (stop_reason={message.stop_reason})")
+    return text
 
 
 @app.route('/chat', methods=['POST'])
@@ -122,8 +125,6 @@ def scan_card_route():
         print(f"❌ scan-card помилка: {e}")
         return jsonify({"status": "error", "error": f"Помилка сервера: {str(e)}"}), 500
 
-
-# ==================== СКАНУВАННЯ ЧЕКА (локально, Tesseract, без Claude) ==========
 @app.route('/scan-receipt', methods=['POST'])
 def scan_receipt_route():
     ts = datetime.now().strftime("%H:%M:%S")

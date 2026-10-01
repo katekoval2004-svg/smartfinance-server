@@ -10,6 +10,7 @@ except Exception:
     pass
 from ultralytics import YOLO
 import anthropic
+from preprocess import enhance_pil
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 
@@ -34,6 +35,9 @@ COLORS = {"Title": "#e6194B", "Address": "#4363d8", "Date": "#f58231", "TotalPri
 
 DEFAULT_CONF = 0.1
 DEFAULT_MODEL = os.environ.get("CLAUDE_MODEL", "claude-sonnet-5")
+# Покращувати вирізки перед Claude (тіні, вицвілий термодрук). YOLO бачить оригінал:
+# на обробленому фото вона знаходить менше товарів, бо тренувалась на звичайних фото.
+ENHANCE_CROPS = os.environ.get("RECEIPT_ENHANCE", "1") != "0"
 
 def iou(a, b):
     ix1, iy1 = max(a[0], b[0]), max(a[1], b[1])
@@ -87,7 +91,7 @@ def organize(dets):
     items.sort(key=lambda d: d["box"][1])
     return scal, items, right
 
-def build_content(img, scal, items, right):
+def build_content(img, scal, items, right, enhance=ENHANCE_CROPS):
     """Список кропів (полів і товарів) для Claude. ПОВНЕ фото не додаємо."""
     W, H = img.size
     content = []
@@ -98,6 +102,8 @@ def build_content(img, scal, items, right):
         crop = img.crop((x1, y1, x2, y2))
         if crop.width < 300:
             s = 300/crop.width; crop = crop.resize((int(crop.width*s), int(crop.height*s)), Image.LANCZOS)
+        if enhance:
+            crop = enhance_pil(crop)
         content.append({"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": b64_png(crop)}})
         content.append({"type": "text", "text": label})
     for cls, d in scal.items():
@@ -136,7 +142,7 @@ def read_with_claude(content, model_name=DEFAULT_MODEL):
     return json.loads(s)
 
 # ---- ФУНКЦІЯ ДЛЯ СЕРВЕРА ----
-def scan_receipt(image_bytes, conf=DEFAULT_CONF, claude_model=DEFAULT_MODEL):
+def scan_receipt(image_bytes, conf=DEFAULT_CONF, claude_model=DEFAULT_MODEL, enhance=ENHANCE_CROPS):
     """Байти зображення -> JSON чека (детекція YOLO + читання кропів Claude)."""
     img = Image.open(io.BytesIO(image_bytes))
     img = ImageOps.exif_transpose(img).convert("RGB")  # застосувати орієнтацію з телефона
@@ -147,7 +153,7 @@ def scan_receipt(image_bytes, conf=DEFAULT_CONF, claude_model=DEFAULT_MODEL):
         empty["_error"] = "no_boxes"
         return empty
     scal, items, right = organize(dets)
-    content = build_content(img, scal, items, right)
+    content = build_content(img, scal, items, right, enhance=enhance)
     try:
         data = read_with_claude(content, claude_model)
     except Exception as e:

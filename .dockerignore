@@ -1,0 +1,12 @@
+# не копіювати старий venv у образ (він величезний і не потрібен)
+bin/
+lib/
+lib64/
+include/
+share/
+pyvenv.cfg
+__pycache__/
+*.pyc
+# ключ береться з Railway Variables, у образ не кладемо
+ai.env
+annotated.png
