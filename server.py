@@ -4,6 +4,7 @@ import anthropic
 from dotenv import load_dotenv
 from flask_cors import CORS
 from datetime import datetime
+import threading
 
 load_dotenv('ai.env')
 
@@ -135,11 +136,24 @@ def scan_receipt_route():
     try:
         from infer import scan_receipt   # твоя YOLO (infer.py) + Claude по кропах
         result = scan_receipt(f.read())
-        print(f"   -> merchant={result.get('merchant')} items={len(result.get('items', []))}")
+        print(f"   -> merchant={result.get('merchant')} items={len(result.get('items', []))}"
+              f"{' error=' + str(result['_error']) if result.get('_error') else ''}", flush=True)
         return jsonify({"status": "success", **result})
     except Exception as e:
         print(f"❌ scan-receipt помилка: {e}")
         return jsonify({"status": "error", "error": f"Помилка сервера: {str(e)}"}), 500
+
+
+def _warmup():
+    """Вантажимо YOLO одразу після старту, а не на першому запиті (інакше він може не вкластися в тайм-аут застосунку)."""
+    try:
+        from infer import get_model
+        get_model()
+        print("✅ YOLO чека завантажено", flush=True)
+    except Exception as e:
+        print(f"⚠️ Не вдалося завантажити YOLO заздалегідь: {e}", flush=True)
+
+threading.Thread(target=_warmup, daemon=True).start()
 
 
 @app.route('/health', methods=['GET'])

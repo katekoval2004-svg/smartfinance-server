@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """Детектор-first: YOLO обводить поля/товари -> читаємо кожен бокс -> збираємо JSON.
 CLI зберігає фото з боксами; функція scan_receipt() використовується сервером."""
-import os, io, sys, json, glob, base64, argparse
+import os, io, sys, json, glob, base64, argparse, time
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 try:
     import pillow_heif; pillow_heif.register_heif_opener()
@@ -91,6 +91,28 @@ def organize(dets):
     items.sort(key=lambda d: d["box"][1])
     return scal, items, right
 
+INSTRUCTIONS = f"""Прочитай текст і поверни ЛИШЕ JSON:
+{{
+  "merchant": str, "location": str|null, "date": "YYYY-MM-DD"|null,
+  "total": number|null, "vat": number|null, "order_number": str|null,
+  "items": [ {{"name": str, "qty": number, "price": number, "category": str}} ]
+}}
+Правила:
+- merchant — торгова назва магазину (напр. "EVA"), не юридична особа. Бренди латиницею як надруковано.
+- Для кожного товару: name зліва, price (ціна за позицію) справа у тому ж рядку.
+- qty: якщо у вирізці видно множник "N шт X ціна" — це N; інакше qty = 1. "Nшт" у назві — фасування, не кількість.
+- Виправляй лише явні помилки OCR/переноси; не вигадуй нечіткі слова. Без штрих-кодів і цін усередині назви.
+- category — рівно одне зі списку: {', '.join(CATEGORIES)}.
+- Чого немає — null (для items — [])."""
+
+def build_full_content(img, enhance=ENHANCE_CROPS, max_side=1800):
+    """Запасний варіант, коли YOLO нічого не знайшла (напр. скан з іншим виглядом): усе фото цілком."""
+    im = img.copy(); im.thumbnail((max_side, max_side), Image.LANCZOS)
+    if enhance:
+        im = enhance_pil(im)
+    return [{"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": b64_png(im)}},
+            {"type": "text", "text": "Вище — фото чека цілком.\n" + INSTRUCTIONS}]
+
 def build_content(img, scal, items, right, enhance=ENHANCE_CROPS):
     """Список кропів (полів і товарів) для Claude. ПОВНЕ фото не додаємо."""
     W, H = img.size
@@ -114,20 +136,7 @@ def build_content(img, scal, items, right, enhance=ENHANCE_CROPS):
         h = d["box"][3] - d["box"][1]
         add_crop(d["box"], f"^ товар {i+1} (назва зліва, ціна справа; може бути 2 рядки)",
                  to_right=True, extra_down=int(h * 1.3))
-    content.append({"type": "text", "text": f"""Вище — вирізки з чека, кожна підписана (поле або товар).
-Прочитай текст кожної й поверни ЛИШЕ JSON:
-{{
-  "merchant": str, "location": str|null, "date": "YYYY-MM-DD"|null,
-  "total": number|null, "vat": number|null, "order_number": str|null,
-  "items": [ {{"name": str, "qty": number, "price": number, "category": str}} ]
-}}
-Правила:
-- merchant — торгова назва магазину (напр. "EVA"), не юридична особа. Бренди латиницею як надруковано.
-- Для кожного товару: name зліва, price (ціна за позицію) справа у тому ж рядку.
-- qty: якщо у вирізці видно множник "N шт X ціна" — це N; інакше qty = 1. "Nшт" у назві — фасування, не кількість.
-- Виправляй лише явні помилки OCR/переноси; не вигадуй нечіткі слова. Без штрих-кодів і цін усередині назви.
-- category — рівно одне зі списку: {', '.join(CATEGORIES)}.
-- Чого немає — null (для items — [])."""})
+    content.append({"type": "text", "text": "Вище — вирізки з чека, кожна підписана (поле або товар).\n" + INSTRUCTIONS})
     return content
 
 def read_with_claude(content, model_name=DEFAULT_MODEL):
@@ -146,14 +155,18 @@ def scan_receipt(image_bytes, conf=DEFAULT_CONF, claude_model=DEFAULT_MODEL, enh
     """Байти зображення -> JSON чека (детекція YOLO + читання кропів Claude)."""
     img = Image.open(io.BytesIO(image_bytes))
     img = ImageOps.exif_transpose(img).convert("RGB")  # застосувати орієнтацію з телефона
+    t0 = time.time()
     dets = detect(img, conf=conf)
     empty = {"merchant": None, "location": None, "date": None, "total": None,
              "vat": None, "order_number": None, "items": []}
-    if not dets:
-        empty["_error"] = "no_boxes"
-        return empty
-    scal, items, right = organize(dets)
-    content = build_content(img, scal, items, right, enhance=enhance)
+    scal, items, right = organize(dets) if dets else ({}, [], 0)
+    print(f"   YOLO: {img.size[0]}x{img.size[1]}, полів={len(scal)}, товарів={len(items)}, {time.time()-t0:.1f}s", flush=True)
+    if not items:
+        # Без товарних боксів вирізки нічого не дадуть — читаємо фото цілком.
+        print("   YOLO не знайшла товарів -> повне фото в Claude", flush=True)
+        content = build_full_content(img, enhance=enhance)
+    else:
+        content = build_content(img, scal, items, right, enhance=enhance)
     try:
         data = read_with_claude(content, claude_model)
     except Exception as e:
