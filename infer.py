@@ -143,7 +143,7 @@ def read_with_claude(content, model_name=DEFAULT_MODEL):
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
         raise RuntimeError("Немає ANTHROPIC_API_KEY — перевір ai.env поряд з infer.py")
-    msg = anthropic.Anthropic(api_key=api_key).messages.create(
+    msg = anthropic.Anthropic(api_key=api_key, timeout=280, max_retries=1).messages.create(
         model=model_name, max_tokens=8192,
         messages=[{"role": "user", "content": content}])
     text = "".join(x.text for x in msg.content if x.type == "text").strip()

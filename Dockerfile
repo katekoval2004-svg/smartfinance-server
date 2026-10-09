@@ -17,4 +17,4 @@ COPY . .
 
 # Railway передає $PORT; 1 воркер + більший таймаут (модель + Claude)
 # gthread: довгий запит до Claude займає один потік, а не весь сервер (чеки й /health не чекають)
-CMD gunicorn server:app --bind 0.0.0.0:${PORT:-8080} --workers 1 --worker-class gthread --threads 4 --timeout 300
+CMD gunicorn server:app --bind 0.0.0.0:${PORT:-8080} --workers 1 --worker-class gthread --threads 4 --timeout 600
