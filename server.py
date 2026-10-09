@@ -14,7 +14,8 @@ os.environ.setdefault("CARD_DET_WEIGHTS", os.path.join(_HERE, "card_detector.pt"
 os.environ.setdefault("CARD_OCR_WEIGHTS", os.path.join(_HERE, "card_ocr_crnn.pt"))
 os.environ.setdefault("RECEIPT_DET_WEIGHTS", os.path.join(_HERE, "best.pt"))  # YOLO чека
 
-client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+# 150 с × 2 спроби < 300 с тайм-ауту gunicorn: повільний запит закінчиться помилкою, а не вбитим воркером
+client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"), timeout=150, max_retries=1)
 
 app = Flask(__name__)
 CORS(app)
@@ -50,6 +51,8 @@ def get_claude_response(user_text):
         message = client.messages.create(
             model="claude-sonnet-5",
             max_tokens=7000,
+            # Для чату «medium» помітно швидше за типовий «high» і достатньо для порад
+            output_config={"effort": "medium"},
             system=SYSTEM_PROMPT,
             messages=[
                 {"role": "user", "content": user_text}
