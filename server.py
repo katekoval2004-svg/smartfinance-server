@@ -45,6 +45,22 @@ SYSTEM_PROMPT = """
 """
 
 
+# Застосунок шле: <усі рахунки й транзакції> + цей маркер + питання користувача.
+QUESTION_MARKER = "=== ЗАПИТ КОРИСТУВАЧА ==="
+
+
+def _split_for_cache(user_text):
+    """Історію (усі транзакції) кешуємо: поки дані не змінились, наступні питання читають її
+    з кешу Claude — швидше й ~10× дешевше. Питання йде окремим блоком після точки кешу."""
+    idx = user_text.rfind(QUESTION_MARKER)
+    if idx <= 0:
+        return user_text
+    return [
+        {"type": "text", "text": user_text[:idx], "cache_control": {"type": "ephemeral"}},
+        {"type": "text", "text": user_text[idx:]},
+    ]
+
+
 def get_claude_response(user_text):
     """Отримання фінансової відповіді від Claude. Помилки пробрасуються — /chat поверне 500."""
     try:
@@ -55,12 +71,15 @@ def get_claude_response(user_text):
             output_config={"effort": "medium"},
             system=SYSTEM_PROMPT,
             messages=[
-                {"role": "user", "content": user_text}
+                {"role": "user", "content": _split_for_cache(user_text)}
             ]
         )
     except Exception as e:
         print(f"Помилка запиту до Claude: {e}")
         raise
+    u = message.usage
+    print(f"   Claude: кеш прочитано={u.cache_read_input_tokens or 0}, записано={u.cache_creation_input_tokens or 0}, "
+          f"без кешу={u.input_tokens}, відповідь={u.output_tokens}", flush=True)
     text = "".join(block.text for block in message.content if block.type == "text").strip()
     if not text:
         raise RuntimeError(f"Claude повернув порожню відповідь (stop_reason={message.stop_reason})")
